@@ -1,7 +1,9 @@
-﻿using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.X509Certificates;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Graph;
+using Microsoft.Graph.Applications.Item.AddKey;
+using Microsoft.Graph.Models;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -22,16 +24,14 @@ const string newKeyCerFile = "../keys/NewKey.cer";
 const string newKeyPfxFile = "../keys/NewKey.pfx";
 
 // Configure app-only auth using App A
-var clientCert = new X509Certificate2(keyFile, keyPassword.ToCharArray());
+var clientCert = X509CertificateLoader.LoadPkcs12FromFile(keyFile, keyPassword);
 var clientCertCredential = new ClientCertificateCredential(tenantId, clientId, clientCert);
 
 var appContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
 var appToken = await clientCertCredential.GetTokenAsync(appContext);
 Console.WriteLine($"App token: {appToken.Token}");
 
-using var httpClient = new HttpClient();
-var graphClient = new GraphServiceClient(new TokenCredentialAuthProvider(clientCertCredential));
-var serializer = graphClient.HttpProvider.Serializer;
+var graphClient = new GraphServiceClient(clientCertCredential);
 
 try
 {
@@ -46,9 +46,9 @@ catch (Exception ex)
 
 static async Task AddKeyToApp(string appObjectId, string cerPath, string pfxPath, GraphServiceClient client)
 {
-    var newKey = new X509Certificate2(cerPath);
+    var newKey = X509CertificateLoader.LoadCertificateFromFile(cerPath);
 
-    var keyCredential = new Microsoft.Graph.KeyCredential
+    var keyCredential = new KeyCredential
     {
         Usage = "Verify",
         Type = "AsymmetricX509Cert",
@@ -57,15 +57,16 @@ static async Task AddKeyToApp(string appObjectId, string cerPath, string pfxPath
 
     var proof = GenerateProof(pfxPath, appObjectId);
 
-    await client.Applications[appObjectId]
-        .AddKey(keyCredential, proof)
-        .Request()
-        .PostAsync();
+    await client.Applications[appObjectId].AddKey.PostAsync(new AddKeyPostRequestBody
+    {
+        KeyCredential = keyCredential,
+        Proof = proof
+    });
 }
 
 static string GenerateProof(string pfxPath, string objectId)
 {
-    var signingCert = new X509Certificate2(pfxPath, keyPassword);
+    var signingCert = X509CertificateLoader.LoadPkcs12FromFile(pfxPath, keyPassword);
 
     var audience = "00000002-0000-0000-c000-000000000000";
     var claims = new Dictionary<string, object>()
